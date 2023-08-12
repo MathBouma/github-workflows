@@ -1,0 +1,81 @@
+# This workflow runs the 'terraform apply' to deploy resources into Azure
+# Authorises using OIDC
+# https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-azure
+
+name: Terraform Apply
+
+on:
+    workflow_call:
+        inputs:
+            terraform_workspace:
+                description: 'Terraform Workspace'
+                required: true
+                type: string
+            terraform_path:
+                description: 'Terraform Path'
+                required: true
+                type: string
+            environment:
+                description: 'Environment'
+                required: true
+                type: string
+                
+        secrets:
+            azure_client_id:
+                description: 'Azure Client ID'
+                required: true
+            azure_subscription_id:
+                description: 'Azure Subscription ID'
+                required: true
+            azure_tenant_id:
+                description: 'Azure Tenant ID'
+                required: true
+
+permissions: 
+    id-token: write
+    contents: read
+
+jobs:
+    terraform_apply:
+        defaults:
+            run:
+                working-directory: ${{ inputs.terraform_path }}  
+                      
+        name: Terraform Apply
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.environment }}
+    
+        # Required for the OIDC to work with managed identity
+        # https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/guides/service_principal_oidc
+        env: 
+            ARM_CLIENT_ID: ${{ secrets.azure_client_id }}
+            ARM_SUBSCRIPTION_ID: ${{ secrets.azure_subscription_id }}
+            ARM_TENANT_ID: ${{ secrets.azure_tenant_id }}
+            ARM_USE_OIDC: true
+                
+        # Load the source control
+        steps:
+        - name: Checkout
+          uses: actions/checkout@v2
+
+        # Login to Azure using OIDC
+        # https://github.com/marketplace/actions/azure-login
+        - name: Azure Login
+          uses: azure/login@v1
+          with:
+            client-id: ${{ secrets.azure_client_id }}
+            subscription-id: ${{ secrets.azure_subscription_id }}
+            tenant-id: ${{ secrets.azure_tenant_id }}
+        
+        # Setup terraform
+        - name: Setup Terraform
+          uses: hashicorp/setup-terraform@v2
+        
+        - name: Terraform Init
+          run: terraform init
+
+        - name: Set Workspace
+          run: terraform workspace select -or-create ${{ inputs.terraform_workspace }}
+
+        - name: Terraform Apply
+          run: terraform apply -auto-approve -input=false
