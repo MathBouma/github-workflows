@@ -30,6 +30,9 @@ on:
             azure_tenant_id:
                 description: 'Azure Tenant ID'
                 required: true
+            CLOUDFLARE_API_TOKEN:
+                description: 'Optional Cloudflare API token for the cloudflare provider. Usually an environment secret on the job environment.'
+                required: false
 
 permissions: 
     id-token: write
@@ -52,6 +55,9 @@ jobs:
             ARM_SUBSCRIPTION_ID: ${{ secrets.azure_subscription_id }}
             ARM_TENANT_ID: ${{ secrets.azure_tenant_id }}
             ARM_USE_OIDC: true
+            # Read by the cloudflare provider. Empty (and unused) for projects
+            # that don't use it.
+            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
                 
         # Load the source control
         steps:
