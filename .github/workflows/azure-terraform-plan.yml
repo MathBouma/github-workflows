@@ -1,0 +1,106 @@
+# This workflow runs 'terraform plan' (read-only) and writes the plan to the
+# job summary. Intended for pull requests, so changes can be reviewed before
+# 'azure-terraform-apply.yml' applies them on merge.
+# Authorises using OIDC, like azure-terraform-apply.yml.
+
+name: Terraform Plan
+
+on:
+    workflow_call:
+        inputs:
+            terraform_workspace:
+                description: 'Terraform Workspace'
+                required: true
+                type: string
+            terraform_path:
+                description: 'Terraform Path'
+                required: true
+                type: string
+            environment:
+                description: 'Environment (for OIDC subject and environment secrets)'
+                required: true
+                type: string
+
+        secrets:
+            azure_client_id:
+                description: 'Azure Client ID'
+                required: true
+            azure_subscription_id:
+                description: 'Azure Subscription ID'
+                required: true
+            azure_tenant_id:
+                description: 'Azure Tenant ID'
+                required: true
+            CLOUDFLARE_API_TOKEN:
+                description: 'Optional Cloudflare API token for the cloudflare provider. Usually an environment secret on the job environment.'
+                required: false
+
+permissions:
+    id-token: write
+    contents: read
+
+jobs:
+    terraform_plan:
+        defaults:
+            run:
+                working-directory: ${{ inputs.terraform_path }}
+
+        name: Terraform Plan
+        runs-on: ubuntu-latest
+        environment: ${{ inputs.environment }}
+
+        env:
+            ARM_CLIENT_ID: ${{ secrets.azure_client_id }}
+            ARM_SUBSCRIPTION_ID: ${{ secrets.azure_subscription_id }}
+            ARM_TENANT_ID: ${{ secrets.azure_tenant_id }}
+            ARM_USE_OIDC: true
+            CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+        steps:
+        - name: Checkout
+          uses: actions/checkout@v4
+
+        - name: Azure Login
+          uses: azure/login@v1
+          with:
+            client-id: ${{ secrets.azure_client_id }}
+            subscription-id: ${{ secrets.azure_subscription_id }}
+            tenant-id: ${{ secrets.azure_tenant_id }}
+
+        - name: Setup Terraform
+          uses: hashicorp/setup-terraform@v3
+          with:
+            terraform_wrapper: false
+
+        - name: Terraform Init
+          run: terraform init -input=false
+
+        - name: Set Workspace
+          run: terraform workspace select -or-create ${{ inputs.terraform_workspace }}
+
+        # -detailed-exitcode: 0 = no changes, 2 = changes (both success), 1 = error.
+        - name: Terraform Plan
+          run: |
+            set +e
+            terraform plan -input=false -no-color -lock-timeout=120s -detailed-exitcode > plan.txt 2>&1
+            code=$?
+            set -e
+            cat plan.txt
+            case $code in
+              0) result="✅ No changes" ;;
+              2) result="📝 $(grep -E '^Plan:' plan.txt | tail -1)" ;;
+              *) result="❌ Plan failed" ;;
+            esac
+            {
+              echo "### Terraform plan: \`${{ inputs.terraform_path }}\` (${{ inputs.terraform_workspace }})"
+              echo
+              echo "$result"
+              echo
+              echo "<details><summary>Full plan</summary>"
+              echo
+              echo '```'
+              tail -c 60000 plan.txt
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+            [ "$code" -eq 1 ] && exit 1 || exit 0
